@@ -221,6 +221,29 @@ class AbelApp:
         self.canvas_ct.get_tk_widget().pack(fill=tk.BOTH, expand=True)
         self.toolbar_ct = NavigationToolbar2Tk(self.canvas_ct, self.tab_center_test)
 
+        self.tab_cutoff_test = ttk.Frame(self.notebook)
+        self.notebook.add(self.tab_cutoff_test, text="Cutoff Accuracy")
+        
+        # Controls for Cutoff Test
+        cut_control_frame = ttk.Frame(self.tab_cutoff_test)
+        cut_control_frame.pack(side=tk.TOP, fill=tk.X, padx=5, pady=5)
+        
+        ttk.Label(cut_control_frame, text="Range (+/- px):").pack(side=tk.LEFT, padx=2)
+        self.var_cutoff_range = tk.IntVar(value=10)
+        ttk.Entry(cut_control_frame, textvariable=self.var_cutoff_range, width=5).pack(side=tk.LEFT, padx=2)
+        
+        ttk.Label(cut_control_frame, text="Step:").pack(side=tk.LEFT, padx=2)
+        self.var_cutoff_step = tk.IntVar(value=1)
+        ttk.Entry(cut_control_frame, textvariable=self.var_cutoff_step, width=5).pack(side=tk.LEFT, padx=2)
+        
+        ttk.Button(cut_control_frame, text="Run Cutoff Test", command=self.run_cutoff_test).pack(side=tk.LEFT, padx=10)
+
+        # Plots for Cutoff Test
+        self.fig_cut, (self.ax_cut_prof, self.ax_cut_peak) = plt.subplots(1, 2, figsize=(10, 4))
+        self.canvas_cut = FigureCanvasTkAgg(self.fig_cut, master=self.tab_cutoff_test)
+        self.canvas_cut.get_tk_widget().pack(fill=tk.BOTH, expand=True)
+        self.toolbar_cut = NavigationToolbar2Tk(self.canvas_cut, self.tab_cutoff_test)
+
         # Initialize figures
         self.fig_2d, self.ax_2d = plt.subplots(figsize=(5, 4))
         self.cbar_2d = None
@@ -447,9 +470,13 @@ class AbelApp:
         self.run_analysis()
         # If Center Accuracy tab is active, update it too
         try:
-            if self.notebook.index("current") == 4:
+            current_tab = self.notebook.index("current")
+            if current_tab == 4:
                  if hasattr(self, 'center_test_data') and self.center_test_data:
                      self.plot_center_test_results()
+            elif current_tab == 5:
+                 if hasattr(self, 'cutoff_test_data') and self.cutoff_test_data:
+                     self.plot_cutoff_test_results()
         except:
             pass
 
@@ -740,6 +767,173 @@ class AbelApp:
             self.ax_ct_peak.grid(True)
             
             self.canvas_ct.draw()
+        except Exception as e:
+            print(f"Plotting error: {e}")
+
+    def run_cutoff_test(self):
+        self.calculate_cutoff_test()
+        self.plot_cutoff_test_results()
+
+    def calculate_cutoff_test(self):
+        if self.raw_data is None:
+            return
+
+        data = self.extract_profile()
+        if data is None:
+            return
+            
+        data_analysis = np.nan_to_num(data, nan=0.0)
+        
+        try:
+            center = self.var_center_px.get()
+            base_left = self.var_left_cutoff.get()
+            base_right = self.var_right_cutoff.get()
+            
+            r_val = self.var_cutoff_range.get()
+            step = self.var_cutoff_step.get()
+            
+            pixel_size = self.var_pixel_size.get()
+            
+            sw_l = self.var_smooth_win_l.get()
+            sp_l = self.var_smooth_poly_l.get()
+            sw_r = self.var_smooth_win_r.get()
+            sp_r = self.var_smooth_poly_r.get()
+            
+            # Deltas to apply to the cutoffs. 
+            # Positive delta = wider window (left moves left, right moves right)
+            deltas = range(-r_val, r_val + 1, step)
+            
+            # Use the first selected method
+            methods_to_run = [m for m in self.methods if self.method_vars[m].get()]
+            if not methods_to_run:
+                messagebox.showwarning("Warning", "No inversion method selected.")
+                return
+            method = methods_to_run[0] 
+            
+            results = []
+            valid_deltas = []
+
+            for delta in deltas:
+                test_left = base_left - delta
+                test_right = base_right + delta
+                
+                # Calculate widths
+                l_width = center - test_left
+                r_width = test_right - center
+                
+                # Bounds check
+                if l_width < 0 or r_width < 0:
+                    continue
+                if test_left < 0 or test_right >= len(data_analysis):
+                    continue
+
+                # We must force use_cutoff=True for this test to make sense, 
+                # or at least pass the widths correctly.
+                # prepare_profiles uses l_width and r_width if use_cutoff is True.
+                
+                left_smooth, right_smooth = am.prepare_profiles(
+                    data, center, l_width, r_width,
+                    (sw_l, sp_l), (sw_r, sp_r),
+                    smoothing_method=self.var_smoothing_method.get(),
+                    use_cutoff=True, # Force True for this test
+                    taper_edges=self.var_taper_edges.get(),
+                    subtract_bg=self.var_subtract_bg.get()
+                )
+                
+                # Inversion
+                recon_l = am.perform_inversion(left_smooth, method, pixel_size)
+                recon_r = am.perform_inversion(right_smooth, method, pixel_size)
+                    
+                x_l = np.arange(len(recon_l)) * pixel_size
+                x_r = np.arange(len(recon_r)) * pixel_size
+                
+                results.append({
+                    'recon_l': recon_l,
+                    'recon_r': recon_r,
+                    'x_l': x_l,
+                    'x_r': x_r,
+                    'peak_l': np.max(recon_l),
+                    'peak_r': np.max(recon_r)
+                })
+                valid_deltas.append(delta)
+
+            self.cutoff_test_data = {
+                'deltas': valid_deltas,
+                'results': results,
+                'method': method
+            }
+            
+        except Exception as e:
+            messagebox.showerror("Error", f"Cutoff Test Failed: {e}")
+            self.cutoff_test_data = None
+
+    def plot_cutoff_test_results(self):
+        if not hasattr(self, 'cutoff_test_data') or self.cutoff_test_data is None:
+            return
+
+        try:
+            data = self.cutoff_test_data
+            valid_deltas = data['deltas']
+            results = data['results']
+            
+            self.ax_cut_prof.clear()
+            self.ax_cut_peak.clear()
+            
+            # Remove previous colorbar axes if it exists
+            if hasattr(self, 'cut_cax') and self.cut_cax:
+                try:
+                    self.cut_cax.remove()
+                except:
+                    pass
+                self.cut_cax = None
+            
+            import matplotlib.cm as cm
+            from matplotlib.colors import Normalize
+            from matplotlib.cm import ScalarMappable
+            
+            # Create colormap based on delta values
+            norm = Normalize(vmin=min(valid_deltas), vmax=max(valid_deltas))
+            cmap = cm.viridis
+            sm = ScalarMappable(norm=norm, cmap=cmap)
+            sm.set_array([])
+            
+            peaks_l = []
+            peaks_r = []
+            
+            for idx, res in enumerate(results):
+                delta = valid_deltas[idx]
+                color = cmap(norm(delta))
+                
+                if self.var_show_left.get():
+                    self.ax_cut_prof.plot(res['x_l'], res['recon_l']/1e4, color=color, alpha=0.5)
+                    peaks_l.append(res['peak_l'])
+                
+                if self.var_show_right.get():
+                    self.ax_cut_prof.plot(res['x_r'], res['recon_r']/1e4, color=color, linestyle='--', alpha=0.5)
+                    peaks_r.append(res['peak_r'])
+
+            self.ax_cut_prof.set_title(f"Profiles (Color: Delta {valid_deltas[0]}->{valid_deltas[-1]})")
+            self.ax_cut_prof.set_xlabel("Radius (cm)")
+            self.ax_cut_prof.set_ylabel("Density")
+            
+            # Add colorbar inside the plot
+            self.cut_cax = self.ax_cut_prof.inset_axes([0.85, 0.6, 0.03, 0.35]) 
+            cbar = self.fig_cut.colorbar(sm, cax=self.cut_cax, orientation='vertical')
+            cbar.set_label('Cutoff Delta (px)')
+            
+            if self.var_show_left.get() and peaks_l:
+                self.ax_cut_peak.plot(valid_deltas, np.array(peaks_l)/1e4, 'o-', label='Left Peak')
+            if self.var_show_right.get() and peaks_r:
+                self.ax_cut_peak.plot(valid_deltas, np.array(peaks_r)/1e4, 's--', label='Right Peak')
+                
+            self.ax_cut_peak.set_title("Peak Density vs Cutoff Delta")
+            self.ax_cut_peak.set_xlabel("Cutoff Delta (px)")
+            self.ax_cut_peak.set_ylabel("Peak Density")
+            if self.var_show_left.get() or self.var_show_right.get():
+                self.ax_cut_peak.legend()
+            self.ax_cut_peak.grid(True)
+            
+            self.canvas_cut.draw()
         except Exception as e:
             print(f"Plotting error: {e}")
 
