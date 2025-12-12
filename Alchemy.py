@@ -5,12 +5,12 @@ import matplotlib.pyplot as plt
 from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg, NavigationToolbar2Tk
 import os
 import json
-import abel_methods as am
+import backend.abel_methods as am
 
-class AbelApp:
+class AlchemyApp:
     def __init__(self, root):
         self.root = root
-        self.root.title("Abel Inversion Analysis Tool")
+        self.root.title("Alchemy")
         self.root.geometry("1200x800")
         self.root.protocol("WM_DELETE_WINDOW", self.on_closing)
 
@@ -953,5 +953,5 @@ class AbelApp:
 
 if __name__ == "__main__":
     root = tk.Tk()
-    app = AbelApp(root)
+    app = AlchemyApp(root)
     root.mainloop()
