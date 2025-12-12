@@ -171,21 +171,10 @@ def taper_profile(profile):
     
     return np.concatenate([profile, taper])
 
-def subtract_baseline(profile):
-    """
-    Subtracts a constant baseline calculated from the tail (last 10% of points).
-    """
-    if len(profile) < 10: return profile
-    
-    n_tail = max(5, int(len(profile) * 0.1))
-    baseline = np.mean(profile[-n_tail:])
-    
-    return profile - baseline
-
 def prepare_profiles(data, center, left_width, right_width, 
                     smooth_l_params, smooth_r_params, 
                     smoothing_method='savgol',
-                    use_cutoff=False, taper_edges=False, subtract_bg=False):
+                    use_cutoff=False, taper_edges=False):
     """
     Extracts, smooths, and prepares left and right profiles for inversion.
     smooth_params: (window, poly)
@@ -213,14 +202,6 @@ def prepare_profiles(data, center, left_width, right_width,
     
     # Right (Include center pixel)
     right_raw = data_analysis[center:min(len(data_analysis), center+r_width+1)]
-
-    # Subtract Background if requested (before smoothing)
-    if subtract_bg:
-        left_raw = subtract_baseline(left_raw)
-        right_raw = subtract_baseline(right_raw)
-        # Clip negative values to 0 to prevent artifacts
-        left_raw = np.maximum(left_raw, 0)
-        right_raw = np.maximum(right_raw, 0)
 
     # Smoothing
     if smoothing_method == 'none':

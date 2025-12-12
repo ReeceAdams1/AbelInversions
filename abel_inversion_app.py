@@ -136,12 +136,10 @@ class AbelApp:
 
         # Tapering and Background
         self.var_taper_edges = tk.BooleanVar(value=False)
-        self.var_subtract_bg = tk.BooleanVar(value=False)
         
         opts_frame = ttk.Frame(control_frame)
         opts_frame.pack(fill=tk.X, pady=(5, 0))
         ttk.Checkbutton(opts_frame, text="Taper Edges", variable=self.var_taper_edges, command=self.run_analysis).pack(side=tk.LEFT)
-        ttk.Checkbutton(opts_frame, text="Subtract Background", variable=self.var_subtract_bg, command=self.run_analysis).pack(side=tk.LEFT, padx=10)
 
         # Container for Methods and Plot Options side-by-side
         methods_plot_container = ttk.Frame(control_frame)
@@ -228,9 +226,13 @@ class AbelApp:
         cut_control_frame = ttk.Frame(self.tab_cutoff_test)
         cut_control_frame.pack(side=tk.TOP, fill=tk.X, padx=5, pady=5)
         
-        ttk.Label(cut_control_frame, text="Range (+/- px):").pack(side=tk.LEFT, padx=2)
-        self.var_cutoff_range = tk.IntVar(value=10)
-        ttk.Entry(cut_control_frame, textvariable=self.var_cutoff_range, width=5).pack(side=tk.LEFT, padx=2)
+        ttk.Label(cut_control_frame, text="Range Below:").pack(side=tk.LEFT, padx=2)
+        self.var_cutoff_range_below = tk.IntVar(value=10)
+        ttk.Entry(cut_control_frame, textvariable=self.var_cutoff_range_below, width=5).pack(side=tk.LEFT, padx=2)
+
+        ttk.Label(cut_control_frame, text="Range Above:").pack(side=tk.LEFT, padx=2)
+        self.var_cutoff_range_above = tk.IntVar(value=10)
+        ttk.Entry(cut_control_frame, textvariable=self.var_cutoff_range_above, width=5).pack(side=tk.LEFT, padx=2)
         
         ttk.Label(cut_control_frame, text="Step:").pack(side=tk.LEFT, padx=2)
         self.var_cutoff_step = tk.IntVar(value=1)
@@ -331,7 +333,7 @@ class AbelApp:
         if not os.path.exists(init_dir):
             init_dir = os.getcwd()
             
-        file_path = filedialog.askopenfilename(initialdir=init_dir, filetypes=[("CSV files", "*.csv"), ("Text files", "*.txt"), ("All files", "*.*")])
+        file_path = filedialog.askopenfilename(initialdir=init_dir, filetypes=[("Data files", "*.csv;*.txt"), ("CSV files", "*.csv"), ("Text files", "*.txt"), ("All files", "*.*")])
         if not file_path:
             return
         
@@ -342,6 +344,9 @@ class AbelApp:
             except:
                 self.raw_data = np.loadtxt(file_path)
             
+            if self.raw_data.size == 0:
+                raise ValueError("Loaded data is empty.")
+
             # Handle single column 2D arrays -> 1D
             if self.raw_data.ndim == 2 and (self.raw_data.shape[0] == 1 or self.raw_data.shape[1] == 1):
                 self.raw_data = self.raw_data.flatten()
@@ -425,7 +430,7 @@ class AbelApp:
 
     def auto_find_center(self):
         data = self.extract_profile()
-        if data is None:
+        if data is None or data.size == 0:
             return
 
         center_com = am.find_center_of_mass(data)
@@ -448,7 +453,7 @@ class AbelApp:
 
     def auto_detect_widths(self):
         data = self.extract_profile()
-        if data is None:
+        if data is None or data.size == 0:
             return
         
         try:
@@ -471,10 +476,10 @@ class AbelApp:
         # If Center Accuracy tab is active, update it too
         try:
             current_tab = self.notebook.index("current")
-            if current_tab == 4:
+            if current_tab == 3:
                  if hasattr(self, 'center_test_data') and self.center_test_data:
                      self.plot_center_test_results()
-            elif current_tab == 5:
+            elif current_tab == 4:
                  if hasattr(self, 'cutoff_test_data') and self.cutoff_test_data:
                      self.plot_cutoff_test_results()
         except:
@@ -485,7 +490,7 @@ class AbelApp:
         self.root.update_idletasks()
         
         data = self.extract_profile()
-        if data is None:
+        if data is None or data.size == 0:
             self.status_var.set("Ready")
             return
 
@@ -538,8 +543,7 @@ class AbelApp:
                 (sw_l, sp_l), (sw_r, sp_r),
                 smoothing_method=self.var_smoothing_method.get(),
                 use_cutoff=self.var_use_cutoff.get(),
-                taper_edges=self.var_taper_edges.get(),
-                subtract_bg=self.var_subtract_bg.get()
+                taper_edges=self.var_taper_edges.get()
             )
 
             # Update 1D plot with taper if enabled
@@ -576,14 +580,15 @@ class AbelApp:
                 show_r = self.var_show_right.get()
 
                 if len(methods_to_run) > 1:
-                    if show_l: self.ax_res.plot(x_l, recon_l/1e4, '--', label=f'{m} (L)')
-                    if show_r: self.ax_res.plot(x_r, recon_r/1e4, '-', label=f'{m} (R)')
+                    if show_l: self.ax_res.plot(x_l, recon_l, '--', label=f'{m} (L)')
+                    if show_r: self.ax_res.plot(x_r, recon_r, '-', label=f'{m} (R)')
                 else:
-                    if show_l: self.ax_res.plot(x_l, recon_l/1e4, 'b--', label='Left Inverted')
-                    if show_r: self.ax_res.plot(x_r, recon_r/1e4, 'r-', label='Right Inverted')
+                    if show_l: self.ax_res.plot(x_l, recon_l, 'b--', label='Left Inverted')
+                    if show_r: self.ax_res.plot(x_r, recon_r, 'r-', label='Right Inverted')
 
             self.ax_res.set_xlabel("Radius (cm)")
-            self.ax_res.set_ylabel("Plasma Density")
+            self.ax_res.set_ylabel("Plasma Density ($cm^{-3}$)")
+            self.ax_res.ticklabel_format(style='sci', axis='y', scilimits=(0,0))
             if self.ax_res.get_legend_handles_labels()[0]: # Only show legend if something is plotted
                 self.ax_res.legend()
             title = "Inversion Comparison" if len(methods_to_run) > 1 else f"Inversion Result ({methods_to_run[0]})"
@@ -592,11 +597,11 @@ class AbelApp:
 
             # Calculate Stats for the first method
             if methods_to_run:
-                peak_l = np.max(recon_l)
-                peak_r = np.max(recon_r)
+                peak_l = np.max(recon_l) if recon_l.size > 0 else 0.0
+                peak_r = np.max(recon_r) if recon_r.size > 0 else 0.0
                 
-                fwhm_l = am.calculate_fwhm(recon_l, x_l)
-                fwhm_r = am.calculate_fwhm(recon_r, x_r)
+                fwhm_l = am.calculate_fwhm(recon_l, x_l) if recon_l.size > 0 else 0.0
+                fwhm_r = am.calculate_fwhm(recon_r, x_r) if recon_r.size > 0 else 0.0
                 
                 stats_text = f"Method: {methods_to_run[-1]}\n"
                 if show_l: stats_text += f"Peak Density (L): {peak_l:.2e} | FWHM (L): {fwhm_l:.4f} cm\n"
@@ -668,8 +673,7 @@ class AbelApp:
                     (sw_l, sp_l), (sw_r, sp_r),
                     smoothing_method=self.var_smoothing_method.get(),
                     use_cutoff=self.var_use_cutoff.get(),
-                    taper_edges=self.var_taper_edges.get(),
-                    subtract_bg=self.var_subtract_bg.get()
+                    taper_edges=self.var_taper_edges.get()
                 )
                 
                 # Inversion
@@ -684,8 +688,10 @@ class AbelApp:
                     'recon_r': recon_r,
                     'x_l': x_l,
                     'x_r': x_r,
-                    'peak_l': np.max(recon_l),
-                    'peak_r': np.max(recon_r)
+                    'peak_l': np.max(recon_l) if recon_l.size > 0 else 0.0,
+                    'peak_r': np.max(recon_r) if recon_r.size > 0 else 0.0,
+                    'avg_l': np.mean(recon_l) if recon_l.size > 0 else 0.0,
+                    'avg_r': np.mean(recon_r) if recon_r.size > 0 else 0.0
                 })
                 valid_centers.append(center)
 
@@ -737,16 +743,17 @@ class AbelApp:
                 color = cmap(norm(center_val))
                 
                 if self.var_show_left.get():
-                    self.ax_ct_prof.plot(res['x_l'], res['recon_l']/1e4, color=color, alpha=0.5)
-                    peaks_l.append(res['peak_l'])
+                    self.ax_ct_prof.plot(res['x_l'], res['recon_l'], color=color, alpha=0.5)
+                    peaks_l.append(res['avg_l'])
                 
                 if self.var_show_right.get():
-                    self.ax_ct_prof.plot(res['x_r'], res['recon_r']/1e4, color=color, linestyle='--', alpha=0.5)
-                    peaks_r.append(res['peak_r'])
+                    self.ax_ct_prof.plot(res['x_r'], res['recon_r'], color=color, linestyle='--', alpha=0.5)
+                    peaks_r.append(res['avg_r'])
 
             self.ax_ct_prof.set_title(f"Profiles (Color: Center {valid_centers[0]}->{valid_centers[-1]})")
             self.ax_ct_prof.set_xlabel("Radius (cm)")
-            self.ax_ct_prof.set_ylabel("Density")
+            self.ax_ct_prof.set_ylabel("Density ($cm^{-3}$)")
+            self.ax_ct_prof.ticklabel_format(style='sci', axis='y', scilimits=(0,0))
             
             # Add colorbar inside the plot
             # Position: x, y, width, height (in axes coordinates)
@@ -755,13 +762,14 @@ class AbelApp:
             cbar.set_label('Center Pixel')
             
             if self.var_show_left.get() and peaks_l:
-                self.ax_ct_peak.plot(valid_centers, np.array(peaks_l)/1e4, 'o-', label='Left Peak')
+                self.ax_ct_peak.plot(valid_centers, np.array(peaks_l), 'o-', label='Left Avg')
             if self.var_show_right.get() and peaks_r:
-                self.ax_ct_peak.plot(valid_centers, np.array(peaks_r)/1e4, 's--', label='Right Peak')
+                self.ax_ct_peak.plot(valid_centers, np.array(peaks_r), 's--', label='Right Avg')
                 
-            self.ax_ct_peak.set_title("Peak Density vs Center Pixel")
+            self.ax_ct_peak.set_title("Average Density vs Center Pixel")
             self.ax_ct_peak.set_xlabel("Center Pixel")
-            self.ax_ct_peak.set_ylabel("Peak Density")
+            self.ax_ct_peak.set_ylabel("Average Density ($cm^{-3}$)")
+            self.ax_ct_peak.ticklabel_format(style='sci', axis='y', scilimits=(0,0))
             if self.var_show_left.get() or self.var_show_right.get():
                 self.ax_ct_peak.legend()
             self.ax_ct_peak.grid(True)
@@ -789,7 +797,8 @@ class AbelApp:
             base_left = self.var_left_cutoff.get()
             base_right = self.var_right_cutoff.get()
             
-            r_val = self.var_cutoff_range.get()
+            r_below = self.var_cutoff_range_below.get()
+            r_above = self.var_cutoff_range_above.get()
             step = self.var_cutoff_step.get()
             
             pixel_size = self.var_pixel_size.get()
@@ -801,7 +810,8 @@ class AbelApp:
             
             # Deltas to apply to the cutoffs. 
             # Positive delta = wider window (left moves left, right moves right)
-            deltas = range(-r_val, r_val + 1, step)
+            if step < 1: step = 1
+            deltas = range(-abs(r_below), abs(r_above) + 1, step)
             
             # Use the first selected method
             methods_to_run = [m for m in self.methods if self.method_vars[m].get()]
@@ -824,8 +834,7 @@ class AbelApp:
                 # Bounds check
                 if l_width < 0 or r_width < 0:
                     continue
-                if test_left < 0 or test_right >= len(data_analysis):
-                    continue
+                # We allow test_left/right to go out of bounds (clamped by prepare_profiles)
 
                 # We must force use_cutoff=True for this test to make sense, 
                 # or at least pass the widths correctly.
@@ -836,8 +845,7 @@ class AbelApp:
                     (sw_l, sp_l), (sw_r, sp_r),
                     smoothing_method=self.var_smoothing_method.get(),
                     use_cutoff=True, # Force True for this test
-                    taper_edges=self.var_taper_edges.get(),
-                    subtract_bg=self.var_subtract_bg.get()
+                    taper_edges=self.var_taper_edges.get()
                 )
                 
                 # Inversion
@@ -852,15 +860,18 @@ class AbelApp:
                     'recon_r': recon_r,
                     'x_l': x_l,
                     'x_r': x_r,
-                    'peak_l': np.max(recon_l),
-                    'peak_r': np.max(recon_r)
+                    'peak_l': np.max(recon_l) if recon_l.size > 0 else 0.0,
+                    'peak_r': np.max(recon_r) if recon_r.size > 0 else 0.0,
+                    'avg_l': np.mean(recon_l) if recon_l.size > 0 else 0.0,
+                    'avg_r': np.mean(recon_r) if recon_r.size > 0 else 0.0
                 })
                 valid_deltas.append(delta)
 
             self.cutoff_test_data = {
                 'deltas': valid_deltas,
                 'results': results,
-                'method': method
+                'method': method,
+                'requested_range': (-r_below, r_above)
             }
             
         except Exception as e:
@@ -892,7 +903,8 @@ class AbelApp:
             from matplotlib.cm import ScalarMappable
             
             # Create colormap based on delta values
-            norm = Normalize(vmin=min(valid_deltas), vmax=max(valid_deltas))
+            req_min, req_max = data.get('requested_range', (min(valid_deltas) if valid_deltas else 0, max(valid_deltas) if valid_deltas else 0))
+            norm = Normalize(vmin=req_min, vmax=req_max)
             cmap = cm.viridis
             sm = ScalarMappable(norm=norm, cmap=cmap)
             sm.set_array([])
@@ -905,16 +917,17 @@ class AbelApp:
                 color = cmap(norm(delta))
                 
                 if self.var_show_left.get():
-                    self.ax_cut_prof.plot(res['x_l'], res['recon_l']/1e4, color=color, alpha=0.5)
-                    peaks_l.append(res['peak_l'])
+                    self.ax_cut_prof.plot(res['x_l'], res['recon_l'], color=color, alpha=0.5)
+                    peaks_l.append(res['avg_l'])
                 
                 if self.var_show_right.get():
-                    self.ax_cut_prof.plot(res['x_r'], res['recon_r']/1e4, color=color, linestyle='--', alpha=0.5)
-                    peaks_r.append(res['peak_r'])
+                    self.ax_cut_prof.plot(res['x_r'], res['recon_r'], color=color, linestyle='--', alpha=0.5)
+                    peaks_r.append(res['avg_r'])
 
-            self.ax_cut_prof.set_title(f"Profiles (Color: Delta {valid_deltas[0]}->{valid_deltas[-1]})")
+            self.ax_cut_prof.set_title(f"Profiles (Color: Delta {req_min}->{req_max})")
             self.ax_cut_prof.set_xlabel("Radius (cm)")
-            self.ax_cut_prof.set_ylabel("Density")
+            self.ax_cut_prof.set_ylabel("Density ($cm^{-3}$)")
+            self.ax_cut_prof.ticklabel_format(style='sci', axis='y', scilimits=(0,0))
             
             # Add colorbar inside the plot
             self.cut_cax = self.ax_cut_prof.inset_axes([0.85, 0.6, 0.03, 0.35]) 
@@ -922,13 +935,14 @@ class AbelApp:
             cbar.set_label('Cutoff Delta (px)')
             
             if self.var_show_left.get() and peaks_l:
-                self.ax_cut_peak.plot(valid_deltas, np.array(peaks_l)/1e4, 'o-', label='Left Peak')
+                self.ax_cut_peak.plot(valid_deltas, np.array(peaks_l), 'o-', label='Left Avg')
             if self.var_show_right.get() and peaks_r:
-                self.ax_cut_peak.plot(valid_deltas, np.array(peaks_r)/1e4, 's--', label='Right Peak')
+                self.ax_cut_peak.plot(valid_deltas, np.array(peaks_r), 's--', label='Right Avg')
                 
-            self.ax_cut_peak.set_title("Peak Density vs Cutoff Delta")
+            self.ax_cut_peak.set_title("Average Density vs Cutoff Delta")
             self.ax_cut_peak.set_xlabel("Cutoff Delta (px)")
-            self.ax_cut_peak.set_ylabel("Peak Density")
+            self.ax_cut_peak.set_ylabel("Average Density ($cm^{-3}$)")
+            self.ax_cut_peak.ticklabel_format(style='sci', axis='y', scilimits=(0,0))
             if self.var_show_left.get() or self.var_show_right.get():
                 self.ax_cut_peak.legend()
             self.ax_cut_peak.grid(True)
