@@ -1,5 +1,5 @@
 import tkinter as tk
-from tkinter import filedialog, ttk, messagebox
+from tkinter import filedialog, ttk, messagebox, scrolledtext
 import numpy as np
 import matplotlib.pyplot as plt
 from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg, NavigationToolbar2Tk
@@ -31,6 +31,8 @@ class AlchemyApp:
         self.raw_data = None
         self.filename = ""
         self.center_test_data = None
+        self.cutoff_test_data = None
+        self.last_results = None
 
         # --- Layout ---
         # Left frame for controls
@@ -203,9 +205,13 @@ class AlchemyApp:
         ct_control_frame = ttk.Frame(self.tab_center_test)
         ct_control_frame.pack(side=tk.TOP, fill=tk.X, padx=5, pady=5)
         
-        ttk.Label(ct_control_frame, text="Range (+/- px):").pack(side=tk.LEFT, padx=2)
-        self.var_center_range = tk.IntVar(value=10)
-        ttk.Entry(ct_control_frame, textvariable=self.var_center_range, width=5).pack(side=tk.LEFT, padx=2)
+        ttk.Label(ct_control_frame, text="Range Below:").pack(side=tk.LEFT, padx=2)
+        self.var_center_range_below = tk.IntVar(value=10)
+        ttk.Entry(ct_control_frame, textvariable=self.var_center_range_below, width=5).pack(side=tk.LEFT, padx=2)
+
+        ttk.Label(ct_control_frame, text="Range Above:").pack(side=tk.LEFT, padx=2)
+        self.var_center_range_above = tk.IntVar(value=10)
+        ttk.Entry(ct_control_frame, textvariable=self.var_center_range_above, width=5).pack(side=tk.LEFT, padx=2)
         
         ttk.Label(ct_control_frame, text="Step:").pack(side=tk.LEFT, padx=2)
         self.var_center_step = tk.IntVar(value=1)
@@ -245,6 +251,20 @@ class AlchemyApp:
         self.canvas_cut = FigureCanvasTkAgg(self.fig_cut, master=self.tab_cutoff_test)
         self.canvas_cut.get_tk_widget().pack(fill=tk.BOTH, expand=True)
         self.toolbar_cut = NavigationToolbar2Tk(self.canvas_cut, self.tab_cutoff_test)
+
+        self.tab_report = ttk.Frame(self.notebook)
+        self.notebook.add(self.tab_report, text="Report")
+
+        # Report Controls
+        rep_control_frame = ttk.Frame(self.tab_report)
+        rep_control_frame.pack(side=tk.TOP, fill=tk.X, padx=5, pady=5)
+        
+        ttk.Button(rep_control_frame, text="Generate Report", command=self.generate_report).pack(side=tk.LEFT, padx=10)
+        ttk.Button(rep_control_frame, text="Save Report", command=self.save_report).pack(side=tk.LEFT, padx=10)
+
+        # Report Text Area
+        self.txt_report = scrolledtext.ScrolledText(self.tab_report, width=80, height=30)
+        self.txt_report.pack(fill=tk.BOTH, expand=True, padx=5, pady=5)
 
         # Initialize figures
         self.fig_2d, self.ax_2d = plt.subplots(figsize=(5, 4))
@@ -568,10 +588,17 @@ class AlchemyApp:
                  self.status_var.set("Ready")
                  return
 
+            self.last_results = {} # Clear previous results
+
             for m in methods_to_run:
                 # Inversion
                 recon_l = am.perform_inversion(left_smooth, m, pixel_size)
                 recon_r = am.perform_inversion(right_smooth, m, pixel_size)
+                
+                self.last_results[m] = {
+                    'recon_l': recon_l,
+                    'recon_r': recon_r
+                }
 
                 x_l = np.arange(len(recon_l)) * pixel_size
                 x_r = np.arange(len(recon_r)) * pixel_size
@@ -615,9 +642,133 @@ class AlchemyApp:
         finally:
             self.status_var.set("Ready")
 
+    def generate_report(self):
+        self.txt_report.delete(1.0, tk.END)
+        
+        report = []
+        report.append("=== Alchemy Analysis Report ===\n")
+        report.append(f"File: {self.filename}\n")
+        
+        # 1. Raw Data Stats
+        if self.raw_data is not None:
+            report.append("--- Raw Data Statistics ---")
+            
+            # Filter NaNs and 0s for stats
+            valid_data = self.raw_data[~np.isnan(self.raw_data)]
+            non_zero_data = valid_data[valid_data != 0]
+            
+            if valid_data.size > 0:
+                report.append(f"Max Density (Raw): {np.max(valid_data):.4e}")
+            else:
+                report.append("Max Density (Raw): N/A")
+                
+            if non_zero_data.size > 0:
+                report.append(f"Min Density (Raw, non-zero): {np.min(non_zero_data):.4e}")
+            else:
+                report.append("Min Density (Raw, non-zero): N/A")
+            report.append("")
+        else:
+            report.append("No data loaded.\n")
+
+        # 2. Settings
+        report.append("--- Analysis Settings ---")
+        report.append(f"Center Pixel: {self.var_center_px.get()}")
+        report.append(f"Pixel Size: {self.var_pixel_size.get()} cm")
+        report.append(f"Taper Edges: {self.var_taper_edges.get()}")
+        report.append(f"Smoothing Method: {self.var_smoothing_method.get()}")
+        report.append(f"Left Smoothing: Win={self.var_smooth_win_l.get()}, Poly={self.var_smooth_poly_l.get()}")
+        report.append(f"Right Smoothing: Win={self.var_smooth_win_r.get()}, Poly={self.var_smooth_poly_r.get()}")
+        report.append("")
+
+        # 3. Inversion Results
+        if self.last_results:
+            report.append("--- Inversion Results ---")
+            for method, res in self.last_results.items():
+                recon_l = res['recon_l']
+                recon_r = res['recon_r']
+                max_l = np.max(recon_l) if recon_l.size > 0 else 0.0
+                max_r = np.max(recon_r) if recon_r.size > 0 else 0.0
+                
+                report.append(f"Method: {method}")
+                report.append(f"  Max Density (Left): {max_l:.4e}")
+                report.append(f"  Max Density (Right): {max_r:.4e}")
+            report.append("")
+        else:
+            report.append("No inversion results available. Run analysis first.\n")
+
+        # 4. Accuracy Tests
+        report.append("--- Accuracy Test Results ---")
+        
+        # Center Accuracy
+        if self.center_test_data:
+            results = self.center_test_data['results']
+            centers = self.center_test_data['centers']
+            if results:
+                avg_l = [r['avg_l'] for r in results]
+                avg_r = [r['avg_r'] for r in results]
+                
+                range_l = np.max(avg_l) - np.min(avg_l)
+                range_r = np.max(avg_r) - np.min(avg_r)
+                
+                report.append("Center Accuracy Test:")
+                report.append(f"  Range Tested: {min(centers)} to {max(centers)}")
+                report.append(f"  Change in Avg Density (Left): {range_l:.4e}")
+                report.append(f"  Change in Avg Density (Right): {range_r:.4e}")
+        else:
+            report.append("Center Accuracy Test: Not run")
+
+        # Cutoff Accuracy
+        if self.cutoff_test_data:
+            results = self.cutoff_test_data['results']
+            deltas = self.cutoff_test_data['deltas']
+            if results:
+                avg_l = [r['avg_l'] for r in results]
+                avg_r = [r['avg_r'] for r in results]
+                
+                range_l = np.max(avg_l) - np.min(avg_l)
+                range_r = np.max(avg_r) - np.min(avg_r)
+                
+                report.append("Cutoff Accuracy Test:")
+                report.append(f"  Deltas Tested: {min(deltas)} to {max(deltas)}")
+                report.append(f"  Change in Avg Density (Left): {range_l:.4e}")
+                report.append(f"  Change in Avg Density (Right): {range_r:.4e}")
+        else:
+            report.append("Cutoff Accuracy Test: Not run")
+
+        self.txt_report.insert(tk.END, "\n".join(report))
+
+    def save_report(self):
+        report_content = self.txt_report.get(1.0, tk.END)
+        if not report_content.strip():
+            messagebox.showwarning("Warning", "Report is empty. Generate a report first.")
+            return
+            
+        init_dir = r"C:\Users\Reece\Documents\GitHub\AbelInversions"
+        if not os.path.exists(init_dir):
+            init_dir = os.getcwd()
+            
+        file_path = filedialog.asksaveasfilename(
+            initialdir=init_dir, 
+            defaultextension=".txt", 
+            filetypes=[("Text files", "*.txt"), ("All files", "*.*")]
+        )
+        
+        if not file_path:
+            return
+            
+        try:
+            with open(file_path, 'w') as f:
+                f.write(report_content)
+            messagebox.showinfo("Success", "Report saved successfully.")
+        except Exception as e:
+            messagebox.showerror("Error", f"Failed to save report: {e}")
+
     def run_center_test(self):
+        self.status_var.set("Running Center Accuracy Test...")
+        self.root.update_idletasks()
         self.calculate_center_test()
         self.plot_center_test_results()
+        self.status_var.set("Center Accuracy Test Finished")
 
     def calculate_center_test(self):
         if self.raw_data is None:
@@ -631,7 +782,8 @@ class AlchemyApp:
         
         try:
             base_center = self.var_center_px.get()
-            r_val = self.var_center_range.get()
+            r_below = self.var_center_range_below.get()
+            r_above = self.var_center_range_above.get()
             step = self.var_center_step.get()
             
             pixel_size = self.var_pixel_size.get()
@@ -643,7 +795,7 @@ class AlchemyApp:
             sw_r = self.var_smooth_win_r.get()
             sp_r = self.var_smooth_poly_r.get()
             
-            centers = range(base_center - r_val, base_center + r_val + 1, step)
+            centers = range(base_center - r_below, base_center + r_above + 1, step)
             
             # Use the first selected method
             methods_to_run = [m for m in self.methods if self.method_vars[m].get()]
